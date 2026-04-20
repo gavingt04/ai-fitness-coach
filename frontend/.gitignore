@@ -37,3 +37,22 @@ __screenshots__/
 
 # Vite
 *.timestamp-*-*.mjs
+
+
+# 前端忽略
+node_modules/
+dist/
+.env.local
+
+# 后端 Python 忽略
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+*.sqlite3
+
+# 编辑器与系统忽略
+.vscode/
+.idea/
+.DS_Store
