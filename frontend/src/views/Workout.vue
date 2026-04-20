@@ -1,7 +1,7 @@
 <template>
   <div class="workout-container" ref="containerRef">
     <van-nav-bar 
-      title="AI 实时训练" 
+      title="AI 边缘计算版" 
       left-arrow 
       @click-left="stopTrainingAndBack" 
     >
@@ -53,7 +53,7 @@
           开始 {{ currentExerciseName }}
         </van-button>
         <van-button v-else type="danger" block round icon="stop" @click="stopTraining">
-          停止训练
+          结束并保存
         </van-button>
 
         <van-button v-if="!isTraining" type="default" round icon="clock-o" @click="$router.push('/history')">
@@ -68,30 +68,57 @@
       cancel-text="取消" 
       close-on-click-action
       @select="onSelectExercise" 
-      teleport=".workout-container"
     />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onUnmounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { showToast, showFailToast, showLoadingToast } from 'vant';
+import axios from 'axios';
 
+// --- 全局变量接管 ---
+const Pose = window.Pose;
+const POSE_CONNECTIONS = window.POSE_CONNECTIONS;
+const Camera = window.Camera;
+const drawConnectors = window.drawConnectors;
+const drawLandmarks = window.drawLandmarks;
+
+// --- 路由与状态 ---
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 
+// --- DOM 引用 ---
 const containerRef = ref(null); 
 const videoRef = ref(null);
 const canvasRef = ref(null);
+
+// --- 核心状态 ---
 const isTraining = ref(false);
-let ws = null;
-let timer = null;
-
+let poseModel = null;
+let camera = null;
 const showPicker = ref(false);
-const selectedExerciseCode = ref('SQUAT'); 
+const selectedExerciseCode = ref(route.query.exercise || 'SQUAT'); 
 
+// --- AI 语音引擎 ---
+const synth = window.speechSynthesis;
+let lastSpokenText = ''; 
+
+const speakFeedback = (text) => {
+  if (text === lastSpokenText || text === 'Ready' || !text) return;
+  synth.cancel(); 
+  const utterThis = new SpeechSynthesisUtterance(text);
+  utterThis.lang = 'en-US'; 
+  utterThis.rate = 1.1;     
+  utterThis.pitch = 1.0;    
+  synth.speak(utterThis);
+  lastSpokenText = text;
+};
+
+// --- 动作配置 ---
 const exerciseOptions = [
   { name: '深蹲 (Squat)', value: 'SQUAT' },
   { name: '二头弯举 (Bicep Curl)', value: 'BICEP_CURL' },
@@ -113,147 +140,175 @@ const onSelectExercise = (action) => {
 const exerciseInfo = reactive({
   name: selectedExerciseCode.value,
   counter: 0,
-  stage: 'WAITING',
-  feedback: ''
+  stage: 'UP', 
+  feedback: 'Ready'
 });
 
-// --- 全屏控制逻辑 ---
+// --- 几何与平滑算法 ---
+const calculateAngle = (a, b, c) => {
+  const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+  let angle = Math.abs((radians * 180.0) / Math.PI);
+  if (angle > 180.0) angle = 360 - angle;
+  return angle;
+};
+
+const landmarkBuffer = {};
+const getSmoothLandmark = (index, currentPoint) => {
+  if (!landmarkBuffer[index]) landmarkBuffer[index] = [];
+  landmarkBuffer[index].push(currentPoint);
+  if (landmarkBuffer[index].length > 5) landmarkBuffer[index].shift();
+  const avg = landmarkBuffer[index].reduce((acc, val) => {
+    acc.x += val.x; acc.y += val.y;
+    return acc;
+  }, {x: 0, y: 0});
+  return { x: avg.x / landmarkBuffer[index].length, y: avg.y / landmarkBuffer[index].length };
+};
+
+// --- AI 核心判定逻辑 ---
+const processExerciseLogic = (landmarks) => {
+  if (selectedExerciseCode.value === 'SQUAT') {
+    const angle = calculateAngle(getSmoothLandmark(23, landmarks[23]), getSmoothLandmark(25, landmarks[25]), getSmoothLandmark(27, landmarks[27]));
+    if (angle < 90 && exerciseInfo.stage === 'UP') { 
+      exerciseInfo.stage = 'DOWN'; exerciseInfo.feedback = 'Push up!'; speakFeedback('Push up!');
+    } else if (angle > 160 && exerciseInfo.stage === 'DOWN') { 
+      exerciseInfo.stage = 'UP'; exerciseInfo.counter += 1; exerciseInfo.feedback = `Perfect!`; speakFeedback(exerciseInfo.counter.toString());
+    }
+  } else if (selectedExerciseCode.value === 'BICEP_CURL') {
+    const angle = calculateAngle(getSmoothLandmark(12, landmarks[12]), getSmoothLandmark(14, landmarks[14]), getSmoothLandmark(16, landmarks[16]));
+    if (angle < 40 && exerciseInfo.stage === 'DOWN') { 
+      exerciseInfo.stage = 'UP'; exerciseInfo.counter += 1; exerciseInfo.feedback = `Good squeeze!`; speakFeedback(exerciseInfo.counter.toString());
+    } else if (angle > 150 && exerciseInfo.stage === 'UP') { 
+      exerciseInfo.stage = 'DOWN'; exerciseInfo.feedback = 'Slowly down...'; speakFeedback('Slowly down');
+    }
+  } else if (selectedExerciseCode.value === 'DEADLIFT') {
+    const angle = calculateAngle(getSmoothLandmark(12, landmarks[12]), getSmoothLandmark(24, landmarks[24]), getSmoothLandmark(26, landmarks[26]));
+    if (angle < 110 && exerciseInfo.stage === 'UP') { 
+      exerciseInfo.stage = 'DOWN'; exerciseInfo.feedback = 'Push hips forward!'; speakFeedback('Push hips forward');
+    } else if (angle > 160 && exerciseInfo.stage === 'DOWN') { 
+      exerciseInfo.stage = 'UP'; exerciseInfo.counter += 1; exerciseInfo.feedback = `Perfect Pull!`; speakFeedback(exerciseInfo.counter.toString());
+    }
+  } else if (selectedExerciseCode.value === 'PUSH_UP') {
+    const angle = calculateAngle(getSmoothLandmark(11, landmarks[11]), getSmoothLandmark(13, landmarks[13]), getSmoothLandmark(15, landmarks[15]));
+    if (angle < 90 && exerciseInfo.stage === 'UP') { 
+      exerciseInfo.stage = 'DOWN'; exerciseInfo.feedback = 'Push up!'; speakFeedback('Push up!');
+    } else if (angle > 160 && exerciseInfo.stage === 'DOWN') { 
+      exerciseInfo.stage = 'UP'; exerciseInfo.counter += 1; exerciseInfo.feedback = `Perfect!`; speakFeedback(exerciseInfo.counter.toString());
+    }
+  } else if (selectedExerciseCode.value === 'BENCH_PRESS') {
+    const angle = calculateAngle(getSmoothLandmark(11, landmarks[11]), getSmoothLandmark(13, landmarks[13]), getSmoothLandmark(15, landmarks[15]));
+    if (angle < 90 && exerciseInfo.stage === 'UP') { 
+      exerciseInfo.stage = 'DOWN'; exerciseInfo.feedback = 'Drive!'; speakFeedback('Drive!');
+    } else if (angle > 160 && exerciseInfo.stage === 'DOWN') { 
+      exerciseInfo.stage = 'UP'; exerciseInfo.counter += 1; exerciseInfo.feedback = `Light weight!`; speakFeedback(exerciseInfo.counter.toString());
+    }
+  }
+};
+
 const toggleFullScreen = () => {
+  const elem = containerRef.value;
   if (!document.fullscreenElement) {
-    if (containerRef.value.requestFullscreen) {
-      containerRef.value.requestFullscreen();
-    } else if (containerRef.value.webkitRequestFullscreen) { 
-      containerRef.value.webkitRequestFullscreen();
-    }
-    showToast('已进入全屏');
+    if (elem.requestFullscreen) elem.requestFullscreen();
+    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
   } else {
-    if (document.exitFullscreen) {
-      document.exitFullscreen();
-    } else if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen();
-    }
+    if (document.exitFullscreen) document.exitFullscreen();
   }
 };
 
+// --- 控制台动作 (热机与语音解锁) ---
 const startTraining = async () => {
-  const loading = showLoadingToast({ message: '引擎点火...', forbidClick: true });
+  // 语音解锁
+  const unlockUtter = new SpeechSynthesisUtterance(' '); 
+  synth.speak(unlockUtter);
+  speakFeedback("Go"); 
 
+  isTraining.value = true; 
+  exerciseInfo.counter = 0;
+  exerciseInfo.feedback = 'Ready';
+  exerciseInfo.stage = selectedExerciseCode.value === 'BICEP_CURL' ? 'DOWN' : 'UP';
+
+  const loading = showLoadingToast({ message: '引擎就绪中...', forbidClick: true, duration: 0 });
+  
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-    const realCamera = videoDevices.find(d => !d.label.includes('DroidCam')) || videoDevices[0];
+    if(!poseModel){
+      poseModel = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+      poseModel.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      poseModel.onResults((results) => {
+        if (!isTraining.value) return;
+        const ctx = canvasRef.value.getContext('2d');
+        canvasRef.value.width = videoRef.value.videoWidth;
+        canvasRef.value.height = videoRef.value.videoHeight;
+        ctx.save(); 
+        ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+        ctx.drawImage(results.image, 0, 0, canvasRef.value.width, canvasRef.value.height);
+        if (results.poseLandmarks) {
+          processExerciseLogic(results.poseLandmarks);
+          drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#1989fa', lineWidth: 4});
+          drawLandmarks(ctx, results.poseLandmarks, {color: '#07c160', lineWidth: 2, radius: 3});
+        }
+        ctx.restore();
+      });
+    }
 
-    const constraints = { 
-      video: { 
-        deviceId: realCamera?.deviceId ? { exact: realCamera.deviceId } : undefined,
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      } 
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    if (!camera) { 
+      camera = new Camera(videoRef.value, { 
+        onFrame: async () => { 
+          if (isTraining.value) await poseModel.send({image: videoRef.value}); 
+        }, 
+        width: 1280, height: 720 
+      });
+      await camera.start();
+    }
     
-    if (videoRef.value) {
-      videoRef.value.srcObject = stream;
-      await videoRef.value.play(); 
-      
-      isTraining.value = true;
-      initWebSocket();
-      loading.close();
-    }
-  } catch (err) {
     loading.close();
-    showFailToast('摄像头开启失败');
+  } catch (err) { 
+    loading.close(); 
+    showFailToast('引擎启动失败'); 
+    isTraining.value = false; 
   }
 };
 
-const initWebSocket = () => {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws?token=${authStore.token}&exercise=${selectedExerciseCode.value}`;
-  
-  ws = new WebSocket(wsUrl);
-  ws.onopen = () => showToast(`正在进行 ${currentExerciseName.value} 训练`);
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    exerciseInfo.counter = data.counter;
-    exerciseInfo.stage = data.stage;
-    exerciseInfo.feedback = data.feedback;
-
-    if (data.image && canvasRef.value) {
-      const ctx = canvasRef.value.getContext('2d');
-      const img = new Image();
-      img.onload = () => {
-        canvasRef.value.width = img.width;
-        canvasRef.value.height = img.height;
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = data.image.startsWith('data:image') ? data.image : 'data:image/jpeg;base64,' + data.image;
-    }
-  };
-  
-  sendFrames();
-};
-
-const sendFrames = () => {
-  const offCanvas = document.createElement('canvas');
-  const ctx = offCanvas.getContext('2d');
-  
-  timer = setInterval(() => {
-    if (isTraining.value && videoRef.value && ws?.readyState === WebSocket.OPEN) {
-      const vw = videoRef.value.videoWidth;
-      const vh = videoRef.value.videoHeight;
-      
-      if (vw > 0 && vh > 0) {
-        const maxSide = 640;
-        const scale = Math.min(maxSide / vw, maxSide / vh);
-        
-        offCanvas.width = vw * scale;
-        offCanvas.height = vh * scale;
-
-        ctx.drawImage(videoRef.value, 0, 0, offCanvas.width, offCanvas.height);
-        
-        const rawData = offCanvas.toDataURL('image/jpeg', 0.3).split(',')[1];
-        ws.send(rawData);
-      }
-    }
-  }, 150);
-};
-
-// --- 【关键恢复】：被误删的 stopTraining 函数 ---
-const stopTraining = () => {
+const stopTraining = async () => {
+  if (!isTraining.value) return;
   isTraining.value = false;
-  if (timer) clearInterval(timer);
-  if (ws) ws.close();
-  if (videoRef.value?.srcObject) {
-    videoRef.value.srcObject.getTracks().forEach(track => track.stop());
+  const finalCount = exerciseInfo.counter;
+  
+  if (finalCount > 0) {
+    try {
+      showLoadingToast({ message: '保存记录...', duration: 0 });
+      await axios.post('/api/records', { exercise_type: selectedExerciseCode.value, count: finalCount }, { headers: { Authorization: `Bearer ${authStore.token}` } });
+      showToast(`保存成功：完成了 ${finalCount} 个动作`);
+    } catch (e) { showFailToast('保存失败'); }
+  } else { showToast('未产生训练数据'); }
+};
+
+const stopTrainingAndBack = () => { 
+  stopTraining(); 
+  router.back(); 
+};
+
+onUnmounted(() => {
+  isTraining.value = false;
+  if (camera) { 
+    camera.stop(); 
+    camera = null; 
   }
-};
-
-// --- 【新增】：处理导航栏返回按钮的逻辑 ---
-const stopTrainingAndBack = () => {
-  stopTraining();
-  router.back();
-};
-
-onUnmounted(() => stopTraining());
+});
 </script>
 
 <style scoped>
-/* 全屏时的背景处理 */
+/* --- 极其重要的 CSS，控制整体布局不崩塌 --- */
 .workout-container { 
   height: 100vh; 
   display: flex; 
   flex-direction: column; 
   background-color: #000; 
   width: 100%;
+  /* 如果你在电脑宽屏上看，加上 max-width 可以让它像手机一样居中显示 */
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-/* --- 【关键 CSS 修复】：确保导航栏在最上层 --- */
-:deep(.van-nav-bar) {
-  position: relative;
-  z-index: 99; 
-}
+:deep(.van-nav-bar) { position: relative; z-index: 99; }
 
 .video-box { 
   flex: 1; 
@@ -261,10 +316,11 @@ onUnmounted(() => stopTraining());
   display: flex; 
   align-items: center; 
   justify-content: center; 
-  background: #000; 
+  background: #111; 
   overflow: hidden; 
 }
 
+/* 让画布铺满容器，并保持比例剪裁 */
 .ai-canvas { 
   width: 100%; 
   height: 100%; 
@@ -272,26 +328,28 @@ onUnmounted(() => stopTraining());
   transform: scaleX(-1); 
 }
 
+/* 玻璃态数据悬浮窗 */
 .stats-overlay { 
   position: absolute; 
   top: 16px; 
   right: 16px; 
-  background: rgba(0,0,0,0.75); 
+  background: rgba(0,0,0,0.6); 
+  backdrop-filter: blur(8px);
   padding: 16px; 
   border-radius: 12px; 
   color: #fff; 
-  border: 1px solid #1989fa;
-  min-width: 130px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border: 1px solid rgba(25, 137, 250, 0.3); 
+  min-width: 130px; 
   z-index: 10;
 }
+
 .stat-item { margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;}
-.label { font-size: 12px; color: #bbb; }
+.label { font-size: 12px; color: #ccc; }
 .count { color: #1989fa; font-weight: 900; font-size: 24px; }
 .status-tag { color: #07c160; font-weight: bold; }
 .feedback-mini { border-top: 1px solid #333; padding-top: 8px; font-size: 12px; color: #ff976a; text-align: center; display: block;}
 
-/* --- 【关键 CSS 修复】：确保控制台在最上层 --- */
+/* 底部控制台 */
 .control-panel { 
   padding: 20px; 
   background: #fff; 
@@ -306,8 +364,9 @@ onUnmounted(() => stopTraining());
   font-weight: 900; 
   font-size: 20px; 
   margin-bottom: 20px; 
-  text-transform: uppercase;
+  text-transform: uppercase; 
   letter-spacing: 1px;
 }
+
 .button-group { display: flex; gap: 12px; }
 </style>

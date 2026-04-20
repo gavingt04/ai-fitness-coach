@@ -17,5 +17,5 @@ class UserOut(BaseModel):
 
 
 class RecordCreate(BaseModel): #记录前端传回数据的格式
-    exercise: str
+    exercise_type: str
     count: int

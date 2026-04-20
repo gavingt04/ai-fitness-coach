@@ -1,201 +1,141 @@
 <template>
   <div class="history-container">
-    <van-nav-bar title="运动成就" left-arrow @click-left="$router.back()" />
-    
-    <div class="summary-card">
-      <div class="stat-box">
-        <span class="num">{{ totalCount }}</span>
-        <span class="label">累计总次数</span>
+    <van-nav-bar title="训练数据统计" left-arrow @click-left="$router.back()" fixed placeholder />
+
+    <div class="dashboard-content">
+      <van-row gutter="16" class="stat-cards">
+        <van-col span="12">
+          <div class="card total-card">
+            <div class="label">累计训练(次)</div>
+            <div class="value">{{ totalSessions }}</div>
+          </div>
+        </van-col>
+        <van-col span="12">
+          <div class="card count-card">
+            <div class="label">累计完成(个)</div>
+            <div class="value">{{ totalReps }}</div>
+          </div>
+        </van-col>
+      </van-row>
+
+      <div class="chart-box">
+        <h3>动作分布占比</h3>
+        <div ref="pieChartRef" style="height: 250px;"></div>
       </div>
-      <div class="stat-box">
-        <span class="num">{{ trainingDays }}</span>
-        <span class="label">训练天数</span>
+
+      <div class="chart-box">
+        <h3>近七天训练趋势</h3>
+        <div ref="lineChartRef" style="height: 300px;"></div>
+      </div>
+
+      <div class="list-box">
+        <h3>最近活动</h3>
+        <van-empty v-if="records.length === 0" description="暂无记录，快去训练吧" />
+        <van-cell-group inset v-else>
+          <van-cell 
+            v-for="item in records.slice(0, 5)" 
+            :key="item.id"
+            :title="formatType(item.exercise_type)" 
+            :value="item.count + ' 个'" 
+            :label="formatTime(item.timestamp)"
+          />
+        </van-cell-group>
       </div>
     </div>
-
-    <div class="chart-container">
-      <div class="chart-title">近期训练趋势</div>
-      <div ref="chartRef" style="width: 100%; height: 220px;"></div>
-    </div>
-
-    <div class="list-title">训练明细</div>
-    <van-list finished-text="没有更多了">
-      <van-cell v-for="item in records" :key="item.id" class="record-cell">
-        <template #title>
-          <span class="type">{{ item.exercise_type }}</span>
-          <span class="date">{{ formatDate(item.timestamp) }}</span>
-        </template>
-        <template #value>
-          <span class="count">+{{ item.count }}</span>
-        </template>
-      </van-cell>
-    </van-list>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick } from 'vue';
+import { ref, onMounted, nextTick } from 'vue';
 import axios from 'axios';
 import { useAuthStore } from '../stores/auth';
-import * as echarts from 'echarts'; // 引入 ECharts
+import * as echarts from 'echarts';
 
 const authStore = useAuthStore();
 const records = ref([]);
-const chartRef = ref(null); // 图表 DOM 引用
+const totalSessions = ref(0);
+const totalReps = ref(0);
 
-// 累计总数
-const totalCount = computed(() => {
-  return records.value.reduce((sum, item) => sum + item.count, 0);
-});
+const pieChartRef = ref(null);
+const lineChartRef = ref(null);
 
-// 计算训练天数
-const trainingDays = computed(() => {
-  const uniqueDays = new Set(
-    records.value.map(item => {
-      const d = new Date(item.timestamp);
-      return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    })
-  );
-  return uniqueDays.size;
-});
-
-// --- 【新增】：初始化并绘制图表 ---
-const initChart = () => {
-  if (!chartRef.value || records.value.length === 0) return;
-
-  // 1. 数据按日期聚合 (把同一天的次数加起来)
-  const dailyData = {};
-  records.value.forEach(item => {
-    const d = new Date(item.timestamp);
-    const dateKey = `${d.getMonth() + 1}-${d.getDate()}`;
-    if (!dailyData[dateKey]) dailyData[dateKey] = 0;
-    dailyData[dateKey] += item.count;
-  });
-
-  // 2. 提取 X轴(日期) 和 Y轴(次数)
-  // 注意：后端传来的数据是倒序（最新的在前面），画图时我们需要正序（从左到右时间递增），所以要 reverse
-  const dates = Object.keys(dailyData).reverse();
-  const counts = Object.values(dailyData).reverse();
-
-  // 3. 实例化 ECharts
-  const myChart = echarts.init(chartRef.value);
-  
-  // 4. 图表高逼格配置
-  const option = {
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(255, 255, 255, 0.9)',
-      borderRadius: 8
-    },
-    grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: dates,
-      axisLine: { lineStyle: { color: '#ebedf0' } },
-      axisLabel: { color: '#969799', fontSize: 12 }
-    },
-    yAxis: {
-      type: 'value',
-      splitLine: { lineStyle: { type: 'dashed', color: '#ebedf0' } },
-      axisLabel: { color: '#969799' }
-    },
-    series: [
-      {
-        data: counts,
-        type: 'bar',
-        barWidth: '40%',
-        itemStyle: {
-          // 漂亮的蓝色渐变与圆角
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#4facfe' },
-            { offset: 1, color: '#00f2fe' }
-          ]),
-          borderRadius: [6, 6, 0, 0]
-        },
-        label: {
-          show: true,
-          position: 'top',
-          color: '#1989fa',
-          fontWeight: 'bold'
-        }
-      }
-    ]
-  };
-
-  myChart.setOption(option);
+const formatType = (type) => {
+  const map = { SQUAT: '深蹲', BICEP_CURL: '弯举', DEADLIFT: '硬拉', PUSH_UP: '俯卧撑', BENCH_PRESS: '卧推' };
+  return map[type] || type;
 };
 
-// 获取数据
-const fetchHistory = async () => {
+const formatTime = (ts) => new Date(ts).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+const initCharts = () => {
+  // 1. 准备饼图数据：按动作类型分组
+  const typeGroups = {};
+  records.value.forEach(r => {
+    typeGroups[r.exercise_type] = (typeGroups[r.exercise_type] || 0) + r.count;
+  });
+  const pieData = Object.keys(typeGroups).map(key => ({ name: formatType(key), value: typeGroups[key] }));
+
+  const pieChart = echarts.init(pieChartRef.value);
+  pieChart.setOption({
+    tooltip: { trigger: 'item' },
+    series: [{
+      type: 'pie',
+      radius: ['40%', '70%'],
+      avoidLabelOverlap: false,
+      itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+      label: { show: true, position: 'outside' },
+      data: pieData
+    }]
+  });
+
+  // 2. 准备折线图数据：按日期汇总
+  const dateGroups = {};
+  records.value.forEach(r => {
+    const date = new Date(r.timestamp).toLocaleDateString();
+    dateGroups[date] = (dateGroups[date] || 0) + r.count;
+  });
+  const sortedDates = Object.keys(dateGroups).sort().slice(-7);
+  
+  const lineChart = echarts.init(lineChartRef.value);
+  lineChart.setOption({
+    xAxis: { type: 'category', data: sortedDates, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value' },
+    series: [{
+      data: sortedDates.map(d => dateGroups[d]),
+      type: 'line',
+      smooth: true,
+      areaStyle: { opacity: 0.2 },
+      lineStyle: { width: 4 }
+    }]
+  });
+};
+
+onMounted(async () => {
   try {
     const res = await axios.get('/api/records/my', {
       headers: { Authorization: `Bearer ${authStore.token}` }
     });
     records.value = res.data;
-    
-    // 数据获取成功后，等待 DOM 渲染完毕再画图
-    nextTick(() => {
-      initChart();
-    });
+    totalSessions.value = records.value.length;
+    totalReps.value = records.value.reduce((acc, cur) => acc + cur.count, 0);
+
+    await nextTick();
+    initCharts();
   } catch (err) {
     console.error('获取历史记录失败', err);
   }
-};
-
-const formatDate = (dateStr) => {
-  const d = new Date(dateStr);
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  const day = d.getDate().toString().padStart(2, '0');
-  const hours = d.getHours().toString().padStart(2, '0');
-  const minutes = d.getMinutes().toString().padStart(2, '0');
-  return `${month}-${day} ${hours}:${minutes}`;
-};
-
-onMounted(fetchHistory);
+});
 </script>
 
 <style scoped>
-.history-container { min-height: 100vh; background: #f7f8fa; padding-bottom: 20px; }
-
-.summary-card {
-  margin: 16px;
-  padding: 24px;
-  background: linear-gradient(135deg, #1989fa, #0570db);
-  border-radius: 16px;
-  display: flex;
-  justify-content: space-around;
-  color: white;
-  box-shadow: 0 4px 12px rgba(25,137,250,0.3);
-}
-
-.stat-box { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.num { font-size: 32px; font-weight: 900; }
-.label { font-size: 13px; opacity: 0.9; }
-
-/* 图表容器样式 */
-.chart-container {
-  margin: 0 16px 16px;
-  padding: 16px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-}
-.chart-title {
-  font-size: 14px;
-  font-weight: bold;
-  color: #323233;
-  margin-bottom: 10px;
-}
-
-.list-title {
-  margin: 0 16px 8px;
-  font-size: 14px;
-  font-weight: bold;
-  color: #323233;
-}
-
-.record-cell { margin-bottom: 8px; align-items: center; border-radius: 8px; margin: 0 16px 8px; width: auto;}
-.type { font-weight: bold; color: #323233; margin-right: 10px; }
-.date { font-size: 12px; color: #969799; }
-.count { font-size: 20px; color: #1989fa; font-weight: 900; }
+.history-container { min-height: 100vh; background-color: #f7f8fa; padding-bottom: 30px; }
+.dashboard-content { padding: 16px; }
+.stat-cards { margin-bottom: 16px; }
+.card { background: #fff; padding: 20px; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); text-align: center; }
+.total-card { border-bottom: 4px solid #1989fa; }
+.count-card { border-bottom: 4px solid #07c160; }
+.label { font-size: 12px; color: #969799; margin-bottom: 8px; }
+.value { font-size: 24px; font-weight: 900; color: #323233; }
+.chart-box { background: #fff; padding: 16px; border-radius: 16px; margin-bottom: 16px; }
+.chart-box h3 { margin: 0 0 15px 0; font-size: 14px; color: #323233; }
+.list-box h3 { margin: 20px 0 10px 16px; font-size: 14px; color: #969799; }
 </style>

@@ -6,7 +6,10 @@ import base64
 import io
 import uvicorn
 import json
-
+import google.generativeai as genai
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
 # --- 新增：全栈数据库与密码学模块 ---
 from sqlalchemy.orm import Session  # 导入数据库
 from passlib.context import CryptContext # 导入密码加密器，使用 bcrypt 算法进行安全哈希处理
@@ -26,6 +29,20 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
 # 导入所有动作类
 from exercises import Squat, BicepCurl, Deadlift, PushUp, BenchPress
+
+# 加载环境变量
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("❌ 环境变量 GEMINI_API_KEY 未设置！请检查 .env 文件")
+genai.configure(api_key=api_key)
+
+class MetricsInput(BaseModel):
+    height: float
+    weight: float
+    goal: str
+    level: str
+    days: int
 
 # 动作映射表：根据前端传来的动作类型字符串，动态实例化对应的动作类
 EXERCISE_MAP = {
@@ -242,6 +259,58 @@ def get_my_records(
                 .order_by(models.WorkoutRecord.timestamp.desc())\
                 .all()
     return records
+
+@app.post("/api/plan/generate")
+def generate_workout_plan(metrics: MetricsInput, current_user: models.User = Depends(get_current_user)):
+    """
+    调用 Gemini API，根据用户身体指标生成 JSON 格式的训练计划
+    """
+    try:
+        # 强制 Gemini 返回 JSON 格式，这是工程化落地最关键的一步！
+        generation_config = {
+            "temperature": 0.7,
+            "response_mime_type": "application/json", 
+        }
+        
+        # 使用最新的闪电模型，速度快，适合做逻辑处理
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config=generation_config
+        )
+        
+        # 构造精密的 Prompt (提示词工程)
+        prompt = f"""
+        你现在是一位顶级的健身教练。
+        用户数据：身高 {metrics.height}cm, 体重 {metrics.weight}kg。
+        用户目标：{metrics.goal}。经验水平：{metrics.level}。每周训练天数：{metrics.days}天。
+        
+        请为他制定一个训练计划。
+        注意：你【只能】从以下 5 个动作中选择：SQUAT (深蹲), BICEP_CURL (弯举), DEADLIFT (硬拉), PUSH_UP (俯卧撑), BENCH_PRESS (卧推)。
+        
+        必须严格返回一个 JSON 数组，格式如下：
+        [
+          {{
+            "day": 1,
+            "exercise_code": "SQUAT",
+            "exercise_name": "深蹲",
+            "sets": 4,
+            "reps": 12,
+            "advice": "注意保持背部挺直"
+          }},
+          ...
+        ]
+        """
+        
+        # 发起请求
+        response = model.generate_content(prompt)
+        
+        # 直接将 Gemini 返回的 JSON 字符串转成 Python 字典并返回给前端
+        plan_data = json.loads(response.text)
+        return {"message": "计划生成成功", "plan": plan_data}
+        
+    except Exception as e:
+        print(f"Gemini API 调用失败: {e}")
+        raise HTTPException(status_code=500, detail="AI 计划生成失败，请稍后再试")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
