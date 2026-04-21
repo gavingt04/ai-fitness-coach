@@ -1,21 +1,22 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
 
 export const useAuthStore = defineStore('auth', () => {
-  // 从浏览器本地缓存中读取 token，如果没有就是空字符串
-  const token = ref(localStorage.getItem('fitness_token') || '')
+  // 1. 状态 (State)：从本地缓存中读取初始 token，如果没有则为空字符串
+  const token = ref(localStorage.getItem('token') || '');
 
-  // 存入 Token 的方法
-  const setToken = (newToken: string) => {
-    token.value = newToken
-    localStorage.setItem('fitness_token', newToken) // 写入硬盘，刷新不掉登录态
-  }
+  // 2. 动作 (Actions)：登录成功时保存 token
+  const setToken = (newToken) => {
+    token.value = newToken;
+    localStorage.setItem('token', newToken); // 物理存入浏览器缓存
+  };
 
-  // 登出的方法（清除 Token）
-  const clearToken = () => {
-    token.value = ''
-    localStorage.removeItem('fitness_token')
-  }
+  // 3. 动作 (Actions)：登出时清除 token
+  const logout = () => {
+    token.value = '';
+    localStorage.removeItem('token'); // 从浏览器缓存中物理抹除
+  };
 
-  return { token, setToken, clearToken }
-})
+  // 必须将这些变量和函数 return 出去，外部组件才能调用！
+  return { token, setToken, logout };
+});

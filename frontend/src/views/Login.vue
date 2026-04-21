@@ -82,7 +82,7 @@ const onSubmit = async (values) => {
       
       // 2. 打印一下确认，然后立刻跳转到健身主页面
       console.log('Token 已存入 Pinia:', authStore.token);
-      router.push('/workout'); 
+      router.push('/home'); 
       // --- 【关键修改点：结束】 ---
       
     } else {

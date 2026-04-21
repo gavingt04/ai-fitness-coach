@@ -20,6 +20,9 @@ class WorkoutRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     exercise_type = Column(String) 
     count = Column(Integer)
+
+    issues = Column(String, default="")
+    
     user_id = Column(Integer, ForeignKey("users.id"))
     
    

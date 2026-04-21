@@ -19,3 +19,4 @@ class UserOut(BaseModel):
 class RecordCreate(BaseModel): #记录前端传回数据的格式
     exercise_type: str
     count: int
+    issues: Optional[str] = ""  # 【新增】允许前端上传本次的错误总结
