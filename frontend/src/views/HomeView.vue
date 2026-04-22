@@ -1,81 +1,141 @@
 <template>
-  <div class="home-container">
-    <van-nav-bar title="AI 视觉私教引擎" :border="false" />
-
-    <div class="header-card">
-      <div class="user-info">
-        <h2 class="greeting">System Online.</h2>
-        <p class="subtitle">计算视觉就绪，Lean Bulk 模块已激活</p>
+  <div class="p-4 md:p-6 space-y-6 bg-[#0f1115] min-h-screen text-[#e6e1e5] font-sans antialiased">
+    
+    <section 
+      class="relative rounded-3xl overflow-hidden bg-[#1d1b20] border border-white/5 p-6 shadow-2xl min-h-40 flex flex-col justify-center animate-in fade-in slide-in-from-top-4 duration-700"
+    >
+      <div 
+        class="absolute inset-0 z-0 opacity-10 bg-cover bg-center" 
+        style="background-image: url('https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&q=80&w=1000')"
+      ></div>
+      
+      <div class="relative z-10 space-y-1">
+        <h1 class="text-2xl font-bold text-white">欢迎回来, {{ username }}!</h1>
+        <p class="text-xl font-black text-[#22c55e] tracking-tight">今日训练引擎已就绪</p>
       </div>
-      <van-image round width="60" height="60" src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" />
-    </div>
+    </section>
 
-    <div class="feature-grid">
-      <h3 class="section-title">核心运算模块</h3>
-      <van-grid clickable :column-num="2" :gutter="16">
-        <van-grid-item to="/workout">
-          <template #icon>
-            <div class="icon-box blue"><van-icon name="play-circle-o" size="28"/></div>
-          </template>
-          <template #text><span class="grid-text">边缘计算训练</span></template>
-        </van-grid-item>
-        
-        <van-grid-item to="/plan">
-          <template #icon>
-            <div class="icon-box green"><van-icon name="orders-o" size="28"/></div>
-          </template>
-          <template #text><span class="grid-text">大模型计划生成</span></template>
-        </van-grid-item>
+    <section class="grid grid-cols-2 gap-4">
+      
+      <button 
+        @click="router.push('/workout')" 
+        class="col-span-2 relative overflow-hidden bg-[#22c55e] text-white rounded-3xl p-6 flex items-center justify-between shadow-lg shadow-[#22c55e]/20 active:scale-[0.98] transition-all group"
+      >
+        <div class="space-y-1 text-left relative z-10">
+          <span class="text-xl font-black block uppercase tracking-tighter">开始新训练</span>
+          <span class="text-white/80 text-xs font-bold tracking-widest">START SESSION</span>
+        </div>
+        <div class="relative z-10 bg-black/10 p-3 rounded-2xl backdrop-blur-md group-hover:scale-110 transition-transform">
+          <PlayCircle :size="32" fill="currentColor" />
+        </div>
+        <div class="absolute -right-4 -top-4 w-24 h-24 bg-white/20 rounded-full blur-2xl"></div>
+      </button>
 
-        <van-grid-item to="/history">
-          <template #icon>
-            <div class="icon-box orange"><van-icon name="chart-trending-o" size="28"/></div>
-          </template>
-          <template #text><span class="grid-text">生物力学数据</span></template>
-        </van-grid-item>
+      <button 
+        @click="router.push('/plan')" 
+        class="bg-[#1d1b20] rounded-3xl border border-white/5 p-6 flex flex-col items-center justify-center gap-3 hover:bg-[#2b2930] transition-all active:scale-95"
+      >
+        <div class="w-12 h-12 rounded-2xl bg-[#2b2930] flex items-center justify-center">
+          <Sparkles :size="28" class="text-[#22c55e]" />
+        </div>
+        <span class="text-sm font-bold">计划生成</span>
+      </button>
 
-        <van-grid-item @click="handleLogout">
-          <template #icon>
-            <div class="icon-box gray"><van-icon name="revoke" size="28"/></div>
-          </template>
-          <template #text><span class="grid-text">断开系统连接</span></template>
-        </van-grid-item>
-      </van-grid>
-    </div>
+      <button 
+        @click="router.push('/history')" 
+        class="bg-[#1d1b20] rounded-3xl border border-white/5 p-6 flex flex-col items-center justify-center gap-3 hover:bg-[#2b2930] transition-all active:scale-95"
+      >
+        <div class="w-12 h-12 rounded-2xl bg-[#2b2930] flex items-center justify-center">
+          <Activity :size="28" class="text-[#cac4d0]" />
+        </div>
+        <span class="text-sm font-bold">数据概览</span>
+      </button>
+    </section>
+
+    <button 
+      @click="handleLogout" 
+      class="w-full py-4 bg-[#1d1b20] border border-red-500/10 rounded-2xl text-[#cac4d0] text-sm font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all hover:text-red-400 hover:bg-red-500/5"
+    >
+      <LogOut :size="18" />
+      断开系统连接
+    </button>
+
   </div>
 </template>
 
 <script setup>
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { showSuccessToast } from 'vant';
+import axios from 'axios';
+import { 
+  PlayCircle, 
+  Sparkles, 
+  Activity, 
+  LogOut 
+} from 'lucide-vue-next';
 
 const router = useRouter();
 const authStore = useAuthStore();
 
+// 定义动态用户名，默认给个 fallback 防止闪烁
+const username = ref('训练者');
+
+// 页面加载时请求用户信息
+onMounted(async () => {
+  try {
+    const res = await axios.get('/api/users/me', {
+      headers: { Authorization: `Bearer ${authStore.token}` }
+    });
+    // 获取成功后替换动态名称
+    if (res.data && res.data.username) {
+      username.value = res.data.username;
+    }
+  } catch (error) {
+    console.error("加载用户信息失败:", error);
+    // 如果 token 失效，可以在这里直接让用户跳回登录页
+    // router.replace('/login');
+  }
+});
+
+/**
+ * 登出逻辑
+ */
 const handleLogout = () => {
-  authStore.logout(); 
-  router.push('/login');
+  if (typeof authStore.logout === 'function') {
+    authStore.logout();
+  }
+  localStorage.clear();
+  sessionStorage.clear();
+  
+  showSuccessToast('系统已断开');
+  router.replace('/login');
 };
 </script>
 
 <style scoped>
-.home-container { min-height: 100vh; background-color: #f0f3f6; }
-.header-card { 
-  background: linear-gradient(135deg, #1989fa, #054a9e); 
-  padding: 30px 20px; 
-  display: flex; justify-content: space-between; align-items: center;
-  color: white; border-bottom-left-radius: 24px; border-bottom-right-radius: 24px;
-  box-shadow: 0 10px 20px rgba(25, 137, 250, 0.2);
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;700;900&display=swap');
+
+.font-sans {
+  font-family: 'Lexend', system-ui, -apple-system, sans-serif;
 }
-.greeting { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: 1px;}
-.subtitle { margin: 8px 0 0; font-size: 14px; opacity: 0.8; }
-.feature-grid { padding: 24px 16px; }
-.section-title { font-size: 16px; color: #323233; margin-bottom: 16px; font-weight: bold; }
-.icon-box { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; color: white;}
-.blue { background-color: #1989fa; }
-.green { background-color: #07c160; }
-.orange { background-color: #ff976a; }
-.gray { background-color: #969799; }
-.grid-text { font-size: 14px; font-weight: bold; color: #323233; }
-:deep(.van-grid-item__content) { border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+
+.animate-in {
+  animation-duration: 0.7s;
+  animation-fill-mode: both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInFromTop {
+  from { transform: translateY(-1rem); }
+  to { transform: translateY(0); }
+}
+
+.fade-in { animation-name: fadeIn; }
+.slide-in-from-top-4 { animation-name: slideInFromTop; }
 </style>

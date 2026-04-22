@@ -1,11 +1,13 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import basicSsl from '@vitejs/plugin-basic-ssl' // 【新增】引入 HTTPS 插件
+import tailwindcss from '@tailwindcss/vite' // 【新增】引入 Tailwind v4 插件
 
 export default defineConfig({
   plugins: [
     vue(),
-    basicSsl() // 【新增】启用本地 HTTPS
+    basicSsl(), // 【新增】启用本地 HTTPS
+    tailwindcss() // 【新增】将 Tailwind 注入编译流程
   ],
   server: {
     host: '0.0.0.0', // 【关键】允许局域网内的手机访问

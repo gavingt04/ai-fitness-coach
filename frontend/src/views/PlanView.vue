@@ -1,136 +1,178 @@
 <template>
-  <div class="plan-container">
-    <van-nav-bar title="AI 专属计划生成" left-arrow @click-left="$router.back()" />
+  <div class="min-h-screen bg-[#0f1115] pb-24 text-[#e6e1e5] pt-6 px-4 md:px-6 space-y-6 font-sans antialiased">
+    <section class="space-y-1">
+      <div class="flex items-center gap-3 mb-2">
+        <button @click="$router.back()" class="w-10 h-10 flex items-center justify-center rounded-full bg-[#2b2930] shadow-sm hover:bg-[#1d1b20] transition-colors">
+          <ArrowLeft :size="20" />
+        </button>
+        <h1 class="text-2xl font-bold">智能计划生成</h1>
+      </div>
+      <p class="text-sm text-[#cac4d0] pl-1">根据您的身体数据与目标，AI 将为您量身定制训练方案。</p>
+    </section>
 
-    <div v-if="!generatedPlan.length" class="form-box">
-      <h3>告诉 AI 你的情况</h3>
-      <van-form @submit="onSubmit">
-        <van-field v-model="metrics.height" name="height" label="身高(cm)" type="number" placeholder="例如: 175" :rules="[{ required: true }]" />
-        <van-field v-model="metrics.weight" name="weight" label="体重(kg)" type="number" placeholder="例如: 70" :rules="[{ required: true }]" />
-        
-        <van-field name="goal" label="训练目标">
-          <template #input>
-            <van-radio-group v-model="metrics.goal" direction="horizontal">
-              <van-radio name="减脂">减脂</van-radio>
-              <van-radio name="增肌">增肌</van-radio>
-            </van-radio-group>
-          </template>
-        </van-field>
-
-        <van-field name="level" label="经验水平">
-          <template #input>
-            <van-radio-group v-model="metrics.level" direction="horizontal">
-              <van-radio name="新手">新手</van-radio>
-              <van-radio name="老手">老手</van-radio>
-            </van-radio-group>
-          </template>
-        </van-field>
-
-        <div style="margin: 30px 16px;">
-          <van-button round block type="primary" native-type="submit" :loading="isGenerating" loading-text="Gemini 思考中...">
-            ✨ 一键生成专属计划
-          </van-button>
+    <section v-if="!hasGeneratedPlan" class="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-500">
+      <div class="col-span-1 md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-[#1d1b20] p-4 rounded-2xl border border-white/5 flex flex-col gap-2 shadow-sm focus-within:ring-1 focus-within:ring-[#22c55e] transition-all">
+          <div class="flex items-center gap-2 text-[#cac4d0]"><User :size="14" /><span class="text-[10px] font-bold uppercase tracking-widest">年龄</span></div>
+          <input type="number" v-model="metrics.age" class="bg-transparent border-none p-0 text-xl font-bold text-[#22c55e] focus:ring-0 outline-none w-full" />
         </div>
-      </van-form>
-    </div>
-
-    <div v-else class="plan-result">
-      <div class="success-header">
-        <van-icon name="checked" color="#07c160" size="40" />
-        <h2>你的 AI 专属计划已就绪</h2>
+        <div class="bg-[#1d1b20] p-4 rounded-2xl border border-white/5 flex flex-col gap-2 shadow-sm focus-within:ring-1 focus-within:ring-[#22c55e] transition-all">
+          <div class="flex items-center gap-2 text-[#cac4d0]"><Scale :size="14" /><span class="text-[10px] font-bold uppercase tracking-widest">体重 (kg)</span></div>
+          <input type="number" v-model="metrics.weight" class="bg-transparent border-none p-0 text-xl font-bold text-[#22c55e] focus:ring-0 outline-none w-full" />
+        </div>
+        <div class="bg-[#1d1b20] p-4 rounded-2xl border border-white/5 flex flex-col gap-2 shadow-sm focus-within:ring-1 focus-within:ring-[#22c55e] transition-all">
+          <div class="flex items-center gap-2 text-[#cac4d0]"><Activity :size="14" /><span class="text-[10px] font-bold uppercase tracking-widest">身份/职业</span></div>
+          <input type="text" v-model="metrics.identity" placeholder="例如: 学生" class="bg-transparent border-none p-0 text-base font-bold text-[#22c55e] focus:ring-0 outline-none w-full placeholder-[#22c55e]/40" />
+        </div>
+        <div class="bg-[#1d1b20] p-4 rounded-2xl border border-white/5 flex flex-col gap-2 shadow-sm focus-within:ring-1 focus-within:ring-[#22c55e] transition-all">
+          <div class="flex items-center gap-2 text-[#cac4d0]"><ShieldAlert :size="14" /><span class="text-[10px] font-bold uppercase tracking-widest">伤病情况</span></div>
+          <input type="text" v-model="metrics.injury" placeholder="无" class="bg-transparent border-none p-0 text-base font-bold text-[#22c55e] focus:ring-0 outline-none w-full placeholder-[#22c55e]/40" />
+        </div>
       </div>
 
-      <van-cell-group inset class="plan-list">
-        <van-cell 
-          v-for="(item, index) in generatedPlan" 
-          :key="index" 
-          :title="`Day ${item.day}: ${item.exercise_name}`" 
-          :label="item.advice"
-          center
-        >
-          <template #value>
-            <div class="sets-reps">
-              <span class="highlight">{{ item.sets }}</span> 组 × <span class="highlight">{{ item.reps }}</span> 次
+      <div class="bg-[#1d1b20] p-4 rounded-2xl flex flex-col gap-3 border border-white/5 shadow-sm">
+        <div class="flex items-center gap-2"><Target :size="20" class="text-[#22c55e]" /><h2 class="text-lg font-bold">训练目标</h2></div>
+        <div class="grid grid-cols-3 gap-2">
+          <button v-for="goal in ['减脂', '增肌', '塑形']" :key="goal" @click="metrics.goal = goal"
+            :class="['py-2 rounded-xl text-sm font-bold transition-all', metrics.goal === goal ? 'bg-[#22c55e] text-white' : 'bg-[#2b2930] text-[#cac4d0] hover:bg-[#2b2930]/80']">
+            {{ goal }}
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-[#1d1b20] p-4 rounded-2xl flex flex-col gap-3 border border-white/5 shadow-sm">
+        <div class="flex items-center gap-2"><BarChart :size="20" class="text-[#22c55e]" /><h2 class="text-lg font-bold">当前水平</h2></div>
+        <div class="grid grid-cols-3 gap-2">
+          <button v-for="level in ['初级', '中级', '高级']" :key="level" @click="metrics.level = level"
+            :class="['py-2 rounded-xl text-sm font-bold transition-all', metrics.level === level ? 'bg-[#22c55e] text-white' : 'bg-[#2b2930] text-[#cac4d0] hover:bg-[#2b2930]/80']">
+            {{ level }}
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-[#1d1b20] p-4 rounded-2xl flex flex-col gap-3 border border-white/5 shadow-sm md:col-span-1">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2"><Calendar :size="20" class="text-[#22c55e]" /><h2 class="text-lg font-bold">频率</h2></div>
+          <div class="text-[#22c55e] font-bold text-xl">{{ metrics.days }}<span class="text-xs ml-1 font-normal text-[#cac4d0]">天/周</span></div>
+        </div>
+        <div class="flex items-center gap-4 pt-2 border-t border-white/5">
+          <button @click="metrics.days = Math.max(1, metrics.days - 1)" class="w-8 h-8 rounded-full bg-[#2b2930] flex items-center justify-center text-white"><Minus :size="16" /></button>
+          <div class="flex-1 h-1.5 bg-[#2b2930] rounded-full overflow-hidden relative">
+            <div class="absolute h-full bg-[#22c55e] transition-all" :style="{ width: `${(metrics.days/7)*100}%` }"></div>
+          </div>
+          <button @click="metrics.days = Math.min(7, metrics.days + 1)" class="w-8 h-8 rounded-full bg-[#2b2930] flex items-center justify-center text-white"><Plus :size="16" /></button>
+        </div>
+      </div>
+
+      <div class="bg-[#1d1b20] p-4 rounded-2xl flex flex-col gap-3 border border-white/5 shadow-sm md:col-span-1">
+        <div class="flex items-center gap-2"><Dumbbell :size="20" class="text-[#22c55e]" /><h2 class="text-lg font-bold">器械</h2></div>
+        <div class="flex flex-wrap gap-2">
+          <button v-for="eq in ['哑铃', '杠铃', '弹力带', '自重']" :key="eq" @click="toggleEquipment(eq)"
+            :class="['px-3 py-1 rounded-full text-[10px] font-bold border transition-all', metrics.equipments.includes(eq) ? 'bg-[#22c55e]/10 text-[#22c55e] border-[#22c55e]' : 'bg-transparent border-[#49454f] text-[#cac4d0]']">
+            {{ eq }}
+          </button>
+        </div>
+      </div>
+
+      <button @click="generatePlan" :disabled="isGenerating" class="col-span-1 md:col-span-2 h-14 bg-[#22c55e] text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-[#22c55e]/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:grayscale">
+        <Bolt v-if="!isGenerating" :size="20" fill="currentColor" />
+        <span v-else class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+        {{ isGenerating ? 'AI 引擎计算中...' : '生成专属计划' }}
+      </button>
+    </section>
+
+    <section v-else class="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
+      <div class="flex items-end justify-between">
+        <div><h2 class="text-xl font-bold">专属训练计划</h2><p class="text-xs text-[#cac4d0] mt-1 italic">基于您的最新评估生成</p></div>
+        <div class="flex items-center gap-1.5 text-[#22c55e] bg-[#22c55e]/10 px-2.5 py-1 rounded-lg border border-[#22c55e]/20"><Cloud :size="14" /><Check :size="10" /><span class="text-[10px] font-bold">已自动保存</span></div>
+      </div>
+
+      <div class="space-y-3">
+        <div v-for="day in groupedPlan" :key="day.id" class="rounded-2xl border border-white/5 overflow-hidden transition-all" :class="expandedDay === day.id ? 'bg-[#1d1b20] shadow-md' : 'bg-[#1d1b20]/60'">
+          <button @click="expandedDay = expandedDay === day.id ? 0 : day.id" class="w-full p-4 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+              <div :class="['w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg', expandedDay === day.id ? 'bg-[#22c55e] text-white' : 'bg-[#2b2930] text-[#cac4d0]']">D{{ day.id }}</div>
+              <div class="text-left"><h3 class="font-bold">{{ day.title }}</h3><p class="text-[10px] text-[#cac4d0]">{{ day.exercises.length }} 个动作</p></div>
             </div>
-          </template>
-          <template #right-icon>
-            <van-button size="small" type="primary" plain @click="goToWorkout(item.exercise_code)">
-              去练
-            </van-button>
-          </template>
-        </van-cell>
-      </van-cell-group>
-
-      <div style="margin: 30px 16px;">
-        <van-button round block type="default" @click="generatedPlan = []">重新生成</van-button>
+            <component :is="expandedDay === day.id ? ChevronUp : ChevronDown" :size="20" class="text-[#cac4d0]" />
+          </button>
+          <div v-show="expandedDay === day.id" class="border-t border-white/5">
+            <div v-for="(ex, i) in day.exercises" :key="i" class="flex justify-between items-center py-3 px-4 border-b last:border-0 border-white/5 bg-[#2b2930]/30">
+              <div class="flex flex-col"><span class="font-bold text-sm text-[#e6e1e5]">{{ ex.exercise_name }}</span><span class="text-[10px] text-[#cac4d0]">{{ ex.advice || '保持核心收紧' }}</span></div>
+              <div class="text-right flex items-center gap-1">
+                <span class="font-bold text-[#22c55e]">{{ ex.sets }}</span><span class="text-[10px] text-[#cac4d0]">组 ×</span>
+                <span class="font-bold">{{ ex.reps }}</span><span class="text-[10px] text-[#cac4d0]">次</span>
+                <button @click="$router.push({ path: '/workout', query: { exercise: ex.exercise_code } })" class="ml-2 w-7 h-7 rounded-full bg-[#22c55e]/10 text-[#22c55e] flex items-center justify-center"><Play :size="12" fill="currentColor" /></button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+      <button @click="rawPlanData = []" class="w-full p-4 bg-[#1d1b20] border border-white/5 text-[#cac4d0] hover:text-white hover:bg-[#2b2930] transition-colors font-bold rounded-2xl flex items-center justify-center gap-2 mt-4"><RefreshCw :size="20" /> 重新生成评估</button>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue';
-import { useRouter } from 'vue-router';
-import { showToast } from 'vant';
+// 【新增】：导入了 onMounted 生命周期钩子
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import axios from 'axios';
+import { showToast, showFailToast } from 'vant';
+import { ArrowLeft, Bolt, Target, BarChart, Calendar, Dumbbell, Cloud, Check, ChevronDown, ChevronUp, RefreshCw, Minus, Plus, User, Scale, Activity, ShieldAlert, Play } from 'lucide-vue-next';
 
-const router = useRouter();
 const authStore = useAuthStore();
 const isGenerating = ref(false);
-const generatedPlan = ref([]);
+const rawPlanData = ref([]); 
+const expandedDay = ref(1);
 
-// 绑定的表单数据
-const metrics = reactive({
-  height: '',
-  weight: '',
-  goal: '减脂',
-  level: '新手',
-  days: 3
-});
+const metrics = reactive({ age: 25, weight: 70, identity: '学生', injury: '', goal: '减脂', level: '中级', days: 4, equipments: ['哑铃', '弹力带'] });
+const hasGeneratedPlan = computed(() => rawPlanData.value.length > 0);
 
-// 提交给后端
-const onSubmit = async () => {
-  isGenerating.value = true;
+// 【核心逻辑补充】：页面加载时自动请求已有计划
+onMounted(async () => {
   try {
-    const res = await axios.post('/api/plan/generate', {
-      height: Number(metrics.height),
-      weight: Number(metrics.weight),
-      goal: metrics.goal,
-      level: metrics.level,
-      days: metrics.days
-    }, {
+    const res = await axios.get('/api/plan/my', {
       headers: { Authorization: `Bearer ${authStore.token}` }
     });
-    
-    generatedPlan.value = res.data.plan;
-    showToast('生成成功！');
+    // 如果数据库里已经有了计划，就填充给前端展示
+    if (res.data && res.data.plan && res.data.plan.length > 0) {
+      rawPlanData.value = res.data.plan;
+      expandedDay.value = rawPlanData.value[0]?.day || 1;
+    }
   } catch (error) {
-    showToast('生成失败，请检查网络或 API Key');
-    console.error(error);
+    console.error("加载已有计划失败:", error);
+  }
+});
+
+const toggleEquipment = (eq) => {
+  const i = metrics.equipments.indexOf(eq);
+  i > -1 ? metrics.equipments.splice(i, 1) : metrics.equipments.push(eq);
+};
+
+const groupedPlan = computed(() => {
+  const groups = {};
+  rawPlanData.value.forEach(item => {
+    // 兼容重新载入后的标题展示
+    if (!groups[item.day]) groups[item.day] = { id: item.day, title: `训练日 ${item.day}`, exercises: [] };
+    groups[item.day].exercises.push(item);
+  });
+  return Object.values(groups).sort((a, b) => a.id - b.id);
+});
+
+const generatePlan = async () => {
+  isGenerating.value = true;
+  try {
+    const res = await axios.post('/api/plan/generate', { ...metrics, weight: Number(metrics.weight) }, {
+      headers: { Authorization: `Bearer ${authStore.token}` }
+    });
+    rawPlanData.value = res.data.plan;
+    expandedDay.value = rawPlanData.value[0]?.day || 1;
+    showToast('AI 计划已生成');
+  } catch (error) {
+    showFailToast('生成失败，请检查服务');
   } finally {
     isGenerating.value = false;
   }
 };
-
-// 点击去训练，带着动作 Code 跳转
-const goToWorkout = (exerciseCode) => {
-  router.push({
-    path: '/workout',
-    // 利用 URL 传参，告诉 Workout.vue 我们要练什么
-    query: { exercise: exerciseCode } 
-  });
-};
 </script>
-
-<style scoped>
-.plan-container { min-height: 100vh; background-color: #f7f8fa; }
-.form-box { padding: 20px 0; }
-.form-box h3 { text-align: center; color: #323233; margin-bottom: 20px; }
-.plan-result { padding: 20px 0; }
-.success-header { text-align: center; margin-bottom: 20px; }
-.success-header h2 { font-size: 18px; margin-top: 10px; color: #323233; }
-.plan-list { margin-top: 10px; }
-.sets-reps { font-size: 14px; font-weight: bold; color: #969799; margin-right: 10px; }
-.highlight { color: #1989fa; font-size: 18px; }
-</style>

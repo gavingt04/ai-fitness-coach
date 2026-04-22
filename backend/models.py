@@ -11,6 +11,8 @@ class User(Base):
     hashed_password = Column(String)
     height = Column(Float, nullable=True)
     weight = Column(Float, nullable=True)
+    workout_plan = Column(String, nullable=True)
+    email = Column(String, nullable=True)  # 【新增】邮箱字段
 
     records = relationship("WorkoutRecord", back_populates="owner")
 
@@ -22,7 +24,7 @@ class WorkoutRecord(Base):
     count = Column(Integer)
 
     issues = Column(String, default="")
-    
+
     user_id = Column(Integer, ForeignKey("users.id"))
     
    

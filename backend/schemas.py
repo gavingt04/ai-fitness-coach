@@ -6,12 +6,13 @@ from typing import Optional
 class UserCreate(BaseModel):
     username: str
     password: str
-
+    email: Optional[str] = None  # 增加邮箱字段
 # 返回给前端的用户信息格式（过滤掉密码）
 class UserOut(BaseModel):
     id: int
     username: str
-    
+    email: Optional[str] = None  # 增加邮箱字段
+
     class Config:
         from_attributes = True # 允许从 SQLAlchemy 模型转换
 

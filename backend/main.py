@@ -18,6 +18,11 @@ import models
 import schemas
 import database
 
+#导入本地Qwen模型接口
+import requests
+import re
+from typing import List, Optional
+
 # 编写登陆逻辑
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
@@ -35,12 +40,26 @@ if not api_key:
     raise ValueError("❌ 环境变量 GEMINI_API_KEY 未设置！请检查 .env 文件")
 genai.configure(api_key=api_key)
 
+# 定义更新用户信息的 Pydantic 模型
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    weight: Optional[float] = None
+
+
 class MetricsInput(BaseModel):
-    height: float
+    age: int
     weight: float
+    identity: Optional[str] = ""
+    injury: Optional[str] = ""
     goal: str
     level: str
     days: int
+    equipments: List[str]
+
+class PasswordUpdate(BaseModel):
+    old_password: str
+    new_password: str
 
 # 动作映射表
 EXERCISE_MAP = {
@@ -75,7 +94,7 @@ def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="用户名已存在")
     hashed_pwd = pwd_context.hash(user.password)
-    new_user = models.User(username=user.username, hashed_password=hashed_pwd)
+    new_user = models.User(username=user.username, hashed_password=hashed_pwd, email=user.email)
     db.add(new_user)
     db.commit()
     db.refresh(new_user) 
@@ -136,44 +155,70 @@ def get_my_records(
     return records
 
 @app.post("/plan/generate")
-def generate_workout_plan(metrics: MetricsInput, current_user: models.User = Depends(get_current_user)):
+def generate_workout_plan(
+    metrics: MetricsInput, 
+    db: Session = Depends(database.get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
     try:
-        generation_config = {
-            "temperature": 0.7,
-            "response_mime_type": "application/json", 
-        }
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config=generation_config
-        )
+        equipments_str = "、".join(metrics.equipments) if metrics.equipments else "自重"
+        injury_str = metrics.injury if metrics.injury else "无"
+        
+        # 将前端传来的精准数据组装进 Prompt
         prompt = f"""
-        你现在是一位顶级的健身教练。
-        用户数据：身高 {metrics.height}cm, 体重 {metrics.weight}kg。
-        用户目标：{metrics.goal}。经验水平：{metrics.level}。每周训练天数：{metrics.days}天。
+        你是一位专业的 AI 健身教练。请为以下用户制定【{metrics.days}天完整训练计划】：
+        - 用户画像：年龄 {metrics.age}, 日常身份 {metrics.identity}。
+        - 身体指标：体重 {metrics.weight}kg。
+        - 当前水平：{metrics.level}。
+        - 伤病情况：{injury_str}。
+        - 可用器械：{equipments_str}。
+        - 核心目标：{metrics.goal}。
         
-        请为他制定一个训练计划。
-        注意：你【只能】从以下 5 个动作中选择：SQUAT (深蹲), BICEP_CURL (弯举), DEADLIFT (硬拉), PUSH_UP (俯卧撑), BENCH_PRESS (卧推)。
+        【严格要求】：
+        1. 必须生成 {metrics.days} 天的计划。如果包含休息日，用 REST 表示。
+        2. 避开受伤部位。
+        3. 只能使用以下动作代码：SQUAT, BICEP_CURL, DEADLIFT, PUSH_UP, BENCH_PRESS, REST。
         
-        必须严格返回一个 JSON 数组，格式如下：
+        必须严格返回 JSON 数组格式，不要包含多余的文字：
         [
-          {{
-            "day": 1,
-            "exercise_code": "SQUAT",
-            "exercise_name": "深蹲",
-            "sets": 4,
-            "reps": 12,
-            "advice": "注意保持背部挺直"
-          }}
+          {{"day": 1, "exercise_code": "SQUAT", "exercise_name": "深蹲", "sets": 4, "reps": 12, "advice": "动作放慢"}}
         ]
         """
-        response = model.generate_content(prompt)
-        plan_data = json.loads(response.text)
-        return {"message": "计划生成成功", "plan": plan_data}
         
+        # 请求本地大模型 Qwen2.5:7b
+        response = requests.post("http://localhost:11434/api/generate", 
+                               json={"model": "qwen2.5:7b", "prompt": prompt, "stream": False, "format": "json"})
+        response.raise_for_status()
+        result_text = response.json().get("response", "")
+        
+        match = re.search(r'\[.*\]', result_text, re.DOTALL)
+        if match:
+            clean_text = match.group()
+            plan_data = json.loads(clean_text)
+            
+            plan_json_str = json.dumps(plan_data, ensure_ascii=False)
+            db.query(models.User).filter(models.User.id == current_user.id).update(
+                {"workout_plan": plan_json_str}
+            )
+            db.commit() 
+            return {"message": "计划生成并保存成功", "plan": plan_data}
+        else:
+            raise ValueError("AI 未能返回有效的 JSON 数组")
+            
     except Exception as e:
-        print(f"Gemini API 调用失败: {e}")
-        raise HTTPException(status_code=500, detail="AI 计划生成失败，请稍后再试")
-
+        db.rollback()
+        print(f"生成报错: {e}")
+        raise HTTPException(status_code=500, detail="生成失败，请检查服务")
+    
+# 1. 增强获取接口：加入终端打印，方便你直观看到数据库里有没有东西
+@app.get("/plan/my")
+def get_my_plan(current_user: models.User = Depends(get_current_user)):
+    # 在后端终端打印当前用户的存储状态
+    print(f"====== 数据库检索 ======\n用户: {current_user.username}\n数据库中的计划: {current_user.workout_plan}\n======================")
+    
+    if not current_user.workout_plan:
+        return {"plan": []}
+    return {"plan": json.loads(current_user.workout_plan)}
 # ==========================================
 #           AI 引擎核心区 (WebSocket协议)
 # ==========================================
@@ -251,6 +296,60 @@ async def websocket_endpoint(
             )
             db.add(new_record) 
             db.commit()
+
+
+# 3. 添加获取个人信息的 GET 接口
+@app.get("/users/me")
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    return {
+        "id": current_user.id, # 增加真实 ID
+        "username": current_user.username,
+        "email": current_user.email or "",
+        "weight": current_user.weight or 70.0,
+    }
+
+# 4. 添加更新个人信息的 PUT 接口
+@app.put("/users/me")
+def update_user_profile(
+    user_update: UserUpdate,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # 如果修改了用户名，需要检查是否重复
+    if user_update.username and user_update.username != current_user.username:
+        existing = db.query(models.User).filter(models.User.username == user_update.username).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="该昵称/用户名已被占用")
+        current_user.username = user_update.username
+
+    if user_update.email is not None:
+        current_user.email = user_update.email
+        
+    if user_update.weight is not None:
+        current_user.weight = user_update.weight
+        
+    db.commit()
+    return {"message": "个人信息更新成功"}
+
+# 3. 修改密码接口 (为 ChangePassword.vue 准备)
+class PasswordUpdate(BaseModel):
+    old_password: str
+    new_password: str
+
+@app.put("/users/password")
+def update_password(
+    pwd_data: PasswordUpdate,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if not pwd_context.verify(pwd_data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="当前密码错误")
+    
+    current_user.hashed_password = pwd_context.hash(pwd_data.new_password)
+    db.commit()
+    return {"message": "密码修改成功"}
+
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
