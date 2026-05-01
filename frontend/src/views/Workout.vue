@@ -121,6 +121,8 @@ import { useAuthStore } from '../stores/auth';
 import { showToast, showLoadingToast, showSuccessToast, showFailToast } from 'vant';
 import axios from 'axios';
 
+let lastFrameTime = 0; // 记录上一帧的时间
+const frameLog = [];   // (可选) 存储数据
 // 全局变量接管
 const Pose = window.Pose || null;
 const POSE_CONNECTIONS = window.POSE_CONNECTIONS || null;
@@ -266,32 +268,41 @@ const processExerciseLogic = (lm) => {
   const midHip = { x: (hipL.x + hipR.x) / 2, y: (hipL.y + hipR.y) / 2 };
   const midSh = { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 };
 
-  // 智能侧位选择：取置信度更高的一侧
+  /// ==========================================
+  // 【修复】：分离上下半身的侧位判断逻辑
+  // ==========================================
+
+  // 1. 上半身侧位选择：取手肘置信度更高的一侧（适用于俯卧撑、卧推、弯举）
   const isLeftVisible = (lm[13]?.visibility || 0) > (lm[14]?.visibility || 0);
   const activeEar = isLeftVisible ? earL : earR;
   const activeSh = isLeftVisible ? shL : shR;
   const activeEl = isLeftVisible ? elL : elR;
   const activeWr = isLeftVisible ? wrL : wrR;
-  const activeHip = isLeftVisible ? hipL : hipR;
-  const activeKn = isLeftVisible ? knL : knR;
-  const activeAn = isLeftVisible ? anL : anR;
+  const activeHip = isLeftVisible ? hipL : hipR; 
+  // 👇 补回这下面两行，俯卧撑测核心塌陷必须用到它！
+  const activeAn = isLeftVisible ? anL : anR; 
   const activeToe = isLeftVisible ? toeL : toeR;
+
+  // 2. 下半身侧位选择：必须取膝盖置信度更高的一侧（适用于深蹲、硬拉）
+  const isLegLeftVisible = (lm[25]?.visibility || 0) > (lm[26]?.visibility || 0);
+  const legHip = isLegLeftVisible ? hipL : hipR;
+  const legKn = isLegLeftVisible ? knL : knR;
+  const legAn = isLegLeftVisible ? anL : anR;
+  const legToe = isLegLeftVisible ? toeL : toeR;
 
   switch (selectedExerciseCode.value) {
     case 'SQUAT': {
       // 1. 膝关节内扣检测
       const valgusRatio = getDistance(knL, knR) / getDistance(hipL, hipR);
-      if (valgusRatio < 0.7) triggerWarning('膝盖打开', '警告：膝关节严重内扣');
+      if (valgusRatio < 0.8) triggerWarning('膝盖打开', '警告：膝关节严重内扣');
       
-      // 2. 底部反弹预警
-      const kneeAngle = calculateAngle(activeHip, activeKn, activeAn);
-      if (kneeAngle < 100 && getRealtimeAcceleration(kneeAngle) > 800) triggerWarning('放慢速度', '警告：底部反弹冲击过大');
-
-      // 3. 补全：3D 重心失稳检测 (COM/COP)
-      // 计算二维投影重心 (近似)，若重心X坐标超出脚跟到脚尖的范围 (BOS)，判定失衡
-      const comX = (activeSh.x * 0.4 + activeHip.x * 0.4 + activeKn.x * 0.2);
-      const bosMin = Math.min(activeAn.x, activeToe.x) - 0.05; // 预留5%缓冲
-      const bosMax = Math.max(activeAn.x, activeToe.x) + 0.05;
+      // 2. 底部反弹预警 (把 active 替换为 leg)
+      const kneeAngle = calculateAngle(legHip, legKn, legAn);
+      
+      // 3. 补全：3D 重心失稳检测 (把下肢的 active 替换为 leg)
+      const comX = (activeSh.x * 0.4 + legHip.x * 0.4 + legKn.x * 0.2);
+      const bosMin = Math.min(legAn.x, legToe.x) - 0.05; 
+      const bosMax = Math.max(legAn.x, legToe.x) + 0.05;
       if (comX < bosMin || comX > bosMax) triggerWarning('控制重心', '警告：身体重心偏移，失去平衡');
       
       // 4. 补全：动态误差容忍度 (1.5 Sigma 深度衰减)
@@ -314,10 +325,17 @@ const processExerciseLogic = (lm) => {
       // 时间序列对齐 (S-DTW 轻量替代：状态防抖)
       if (kneeAngle < 90) {
         userBaselines.stageHoldFrames++;
-        if(userBaselines.stageHoldFrames > 3 && exerciseInfo.stage === 'UP') { exerciseInfo.stage = 'DOWN'; userBaselines.stageHoldFrames = 0;}
+        if(userBaselines.stageHoldFrames > 3 && exerciseInfo.stage === 'UP') { 
+            exerciseInfo.stage = 'DOWN'; 
+            userBaselines.stageHoldFrames = 0;
+        }
       } else if (kneeAngle > 150) {
         userBaselines.stageHoldFrames++;
-        if(userBaselines.stageHoldFrames > 3 && exerciseInfo.stage === 'DOWN') { completeRep(); userBaselines.stageHoldFrames = 0; }
+        if(userBaselines.stageHoldFrames > 3 && exerciseInfo.stage === 'DOWN') { 
+            exerciseInfo.stage = 'UP'; // ✅ 必须加这句：重置状态！
+            completeRep(); 
+            userBaselines.stageHoldFrames = 0; 
+        }
       } else {
         userBaselines.stageHoldFrames = 0;
       }
@@ -333,7 +351,9 @@ const processExerciseLogic = (lm) => {
       
       const pressAngle = calculateAngle(shL, elL, wrL);
       if (pressAngle < 80 && exerciseInfo.stage === 'UP') exerciseInfo.stage = 'DOWN';
-      else if (pressAngle > 150 && exerciseInfo.stage === 'DOWN') completeRep();
+      else if (pressAngle > 150 && exerciseInfo.stage === 'DOWN')
+      exerciseInfo.stage = 'UP'; // 补上状态重置
+      completeRep();
       break;
     }
 
@@ -344,12 +364,16 @@ const processExerciseLogic = (lm) => {
         triggerWarning('背部挺直', '警告：组内脊柱发生疲劳弯曲 (韧带拉伸)');
       }
       
-      const shinLength = getDistance(activeKn, activeAn);
-      if (Math.abs(activeWr.x - activeAn.x) > shinLength * 0.2) triggerWarning('杠铃贴紧小腿', '警告：杠铃偏离力学中心');
+      const shinLength = getDistance(legKn, legAn);
+      if (Math.abs(activeWr.x - legAn.x) > shinLength * 0.2) triggerWarning('杠铃贴紧小腿', '警告：杠铃偏离力学中心');
       
-      const liftAngle = calculateAngle(activeSh, activeHip, activeKn);
+      const liftAngle = calculateAngle(activeSh, legHip, legKn);
+      
+      
       if (liftAngle < 70 && exerciseInfo.stage === 'UP') exerciseInfo.stage = 'DOWN';
-      else if (liftAngle > 150 && exerciseInfo.stage === 'DOWN') completeRep();
+      else if (liftAngle > 150 && exerciseInfo.stage === 'DOWN') 
+      exerciseInfo.stage = 'UP'; // 补上状态重置
+      completeRep();
       break;
     }
 
@@ -362,12 +386,17 @@ const processExerciseLogic = (lm) => {
       const trunkLength = getDistance(activeSh, activeHip);
       // 计算耳屏点相对于肩峰的水平前移量 (归一化到躯干长度)
       const neckProtrusion = Math.abs(activeEar.x - activeSh.x) / trunkLength;
-      if (neckProtrusion > 0.25) triggerWarning('头部收回', '警告：颈部前伸虚假触底');
+      if (neckProtrusion > 0.5) triggerWarning('头部收回', '警告：颈部前伸虚假触底');
       
       const pushAngle = calculateAngle(activeSh, activeEl, activeWr);
-      if (pushAngle < 90 && exerciseInfo.stage === 'UP') exerciseInfo.stage = 'DOWN';
-      else if (pushAngle > 150 && exerciseInfo.stage === 'DOWN') completeRep();
+      if (pushAngle < 90 && exerciseInfo.stage === 'UP') {
+          exerciseInfo.stage = 'DOWN';
+      } else if (pushAngle > 135 && exerciseInfo.stage === 'DOWN') {
+          exerciseInfo.stage = 'UP'; // ✅ 必须加这句：重置状态！
+          completeRep();
+      }
       break;
+    
     }
 
     case 'BICEP_CURL': {
@@ -400,13 +429,29 @@ const triggerWarning = (speech, text) => {
   speakFeedback(speech, true);
 };
 
+let lastRepTime = 0;
+
 const completeRep = () => {
+  const now = Date.now();
+  // 物理冷却锁：1秒内绝不可能完成两次，防暴跳
+  if (now - lastRepTime < 1000) return; 
+  lastRepTime = now;
+
   exerciseInfo.counter++;
   exerciseInfo.feedback = '动作标准';
   speakFeedback(exerciseInfo.counter.toString());
 };
 
 const onResults = (results) => {
+const now = performance.now();
+  if (lastFrameTime !== 0) {
+    const frame_ms = now - lastFrameTime;
+    const fps = 1000 / frame_ms;
+    // 打印到浏览器的控制台
+    console.log(`[FPS] ${frame_ms.toFixed(1)}ms | ${fps.toFixed(1)}fps`);
+  }
+  lastFrameTime = now;
+
   if (!canvasRef.value) return;
   const canvasCtx = canvasRef.value.getContext('2d');
   canvasCtx.save();

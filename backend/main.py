@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status, WebSocketDisconnect
 import mediapipe as mp
 import cv2
@@ -254,9 +256,10 @@ async def websocket_endpoint(
         return
         
     current_exercise = EXERCISE_MAP[exercise_key]()
-    
+    frame_log = []
     try:
         while True:
+            frame_start = time.perf_counter()  
             data = await websocket.receive_text()
             image_bytes = base64.b64decode(data)
             image_stream = io.BytesIO(image_bytes)
@@ -269,7 +272,8 @@ async def websocket_endpoint(
             
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(frame_workspace, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-                current_exercise.process_frame(results.pose_landmarks.landmark, frame_workspace.copy())
+                world_lm = results.pose_world_landmarks.landmark if results.pose_world_landmarks else None
+                current_exercise.process_frame(results.pose_landmarks.landmark, world_lm, frame_workspace.copy())
 
             frame_final = cv2.flip(frame_workspace, 1)   
             _, buffer = cv2.imencode('.jpg', frame_final)
@@ -282,6 +286,9 @@ async def websocket_endpoint(
                 "stage": current_exercise.stage
             }
             await websocket.send_text(json.dumps(payload))
+            frame_ms = (time.perf_counter() - frame_start) * 1000  
+            frame_log.append(frame_ms)                               
+            print(f"[FPS] {frame_ms:.1f}ms | {1000/frame_ms:.1f}fps")
                 
     except WebSocketDisconnect: 
         print(f"用户 {user.username} 正常离开")
